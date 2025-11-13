@@ -78,7 +78,7 @@ Install the following packages via pip (full `requirements.txt` below):
 - `sentencepiece`
 - `transformers`
 - `torchvision`
-- `kernels`  (Note: This may refer to optimized kernels like xformers; install via `pip install xformers` if needed for attention efficiency)
+- `kernels`
 - `spaces`
 - `torch`
 - `numpy`
