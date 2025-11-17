@@ -121,6 +121,18 @@ pipe.load_lora_weights("dx8152/Qwen-Image-Edit-2509-Light_restoration",
 pipe.load_lora_weights("dx8152/Qwen-Image-Edit-2509-Relight",
                        weight_name="Qwen-Edit-Relight.safetensors",
                        adapter_name="relight")
+pipe.load_lora_weights("dx8152/Qwen-Edit-2509-Multi-Angle-Lighting",
+                       weight_name="多角度灯光-251116.safetensors",
+                       adapter_name="multi-angle-lighting")
+pipe.load_lora_weights("tlennon-ie/qwen-edit-skin",
+                       weight_name="qwen-edit-skin_1.1_000002750.safetensors",
+                       adapter_name="edit-skin")
+pipe.load_lora_weights("lovis93/next-scene-qwen-image-lora-2509",
+                       weight_name="next-scene_lora-v2-3000.safetensors",
+                       adapter_name="next-scene")
+pipe.load_lora_weights("vafipas663/Qwen-Edit-2509-Upscale-LoRA",
+                       weight_name="qwen-edit-enhance_64-v3_000001000.safetensors",
+                       adapter_name="upscale-image")
 
 pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
 MAX_SEED = np.iinfo(np.int32).max
@@ -146,7 +158,7 @@ def update_dimensions_on_upload(image):
     
     return new_width, new_height
 
-@spaces.GPU
+@spaces.GPU(duration=60)
 def infer(
     input_image,
     prompt,
@@ -168,7 +180,15 @@ def infer(
         pipe.set_adapters(["light-restoration"], adapter_weights=[1.0])
     elif lora_adapter == "Relight":
         pipe.set_adapters(["relight"], adapter_weights=[1.0])
-
+    elif lora_adapter == "Multi-Angle-Lighting":
+        pipe.set_adapters(["multi-angle-lighting"], adapter_weights=[1.0])
+    elif lora_adapter == "Edit-Skin":
+        pipe.set_adapters(["edit-skin"], adapter_weights=[1.0])
+    elif lora_adapter == "Next-Scene":
+        pipe.set_adapters(["next-scene"], adapter_weights=[1.0])
+    elif lora_adapter == "Upscale-Image":
+        pipe.set_adapters(["upscale-image"], adapter_weights=[1.0])
+        
     if randomize_seed:
         seed = random.randint(0, MAX_SEED)
 
@@ -193,7 +213,7 @@ def infer(
 
     return result, seed
 
-@spaces.GPU
+@spaces.GPU(duration=60)
 def infer_example(input_image, prompt, lora_adapter):
     input_pil = input_image.convert("RGB")
     guidance_scale = 1.0
@@ -217,7 +237,7 @@ with gr.Blocks(css=css, theme=steel_blue_theme) as demo:
 
         with gr.Row(equal_height=True):
             with gr.Column():
-                input_image = gr.Image(label="Upload Image", type="pil")
+                input_image = gr.Image(label="Upload Image", type="pil", height=290)
                 
                 prompt = gr.Text(
                     label="Edit Prompt",
@@ -225,18 +245,18 @@ with gr.Blocks(css=css, theme=steel_blue_theme) as demo:
                     placeholder="e.g., transform into anime..",
                 )
 
-                run_button = gr.Button("Run", variant="primary")
+                run_button = gr.Button("Edit Image", variant="primary")
 
             with gr.Column():
-                output_image = gr.Image(label="Output Image", interactive=False, format="png", height=290)
+                output_image = gr.Image(label="Output Image", interactive=False, format="png", height=350)
                 
                 with gr.Row():
                     lora_adapter = gr.Dropdown(
                         label="Choose Editing Style",
-                        choices=["Photo-to-Anime", "Multiple-Angles", "Light-Restoration", "Relight"],
+                        choices=["Photo-to-Anime", "Multiple-Angles", "Light-Restoration", "Multi-Angle-Lighting", "Upscale-Image", "Relight", "Next-Scene", "Edit-Skin"],
                         value="Photo-to-Anime"
                     )
-                with gr.Accordion("Advanced Settings", open=False):
+                with gr.Accordion("Advanced Settings", open=False, visible=False):
                     seed = gr.Slider(label="Seed", minimum=0, maximum=MAX_SEED, step=1, value=0)
                     randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
                     guidance_scale = gr.Slider(label="Guidance Scale", minimum=1.0, maximum=10.0, step=0.1, value=1.0)
@@ -248,7 +268,12 @@ with gr.Blocks(css=css, theme=steel_blue_theme) as demo:
                 ["examples/5.jpg", "Remove shadows and relight the image using soft lighting.", "Light-Restoration"],
                 ["examples/4.jpg", "Use a subtle golden-hour filter with smooth light diffusion.", "Relight"],
                 ["examples/2.jpeg", "Rotate the camera 45 degrees to the left.", "Multiple-Angles"],
+                ["examples/7.jpg", "Light source from the Right Rear", "Multi-Angle-Lighting"],
+                ["examples/10.jpeg", "Upscale the image.", "Upscale-Image"],
+                ["examples/7.jpg", "Light source from the Below", "Multi-Angle-Lighting"],
                 ["examples/2.jpeg", "Switch the camera to a top-down right corner view.", "Multiple-Angles"],
+                ["examples/9.jpg", "The camera moves slightly forward as sunlight breaks through the clouds, casting a soft glow around the character's silhouette in the mist. Realistic cinematic style, atmospheric depth.", "Next-Scene"],
+                ["examples/8.jpg", "Make the subjects skin details more prominent and natural.", "Edit-Skin"],
                 ["examples/6.jpg", "Switch the camera to a bottom-up view.", "Multiple-Angles"],
                 ["examples/6.jpg", "Rotate the camera 180 degrees upside down.", "Multiple-Angles"],
                 ["examples/4.jpg", "Rotate the camera 45 degrees to the right.", "Multiple-Angles"],
