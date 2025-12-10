@@ -1,0 +1,10 @@
+{
+  "run": [
+    {
+      "method": "shell.run",
+      "params": {
+        "message": "env{{path.sep}}{{os.platform() === 'win32' ? 'Scripts' : 'bin'}}{{path.sep}}{{os.platform() === 'win32' ? 'python' : 'python3'}} app.py"
+      }
+    }
+  ]
+}
