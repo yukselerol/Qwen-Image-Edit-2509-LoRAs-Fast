@@ -1,0 +1,23 @@
+{
+  "run": [
+    {
+      "method": "shell.run",
+      "params": {
+        "message": "{{os.platform() === 'win32' ? 'python' : 'python3'}} -m venv env"
+      }
+    },
+    {
+      "method": "shell.run",
+      "params": {
+        "message": "env{{path.sep}}{{os.platform() === 'win32' ? 'Scripts' : 'bin'}}{{path.sep}}pip install -r requirements.txt"
+      }
+    },
+    {
+      "method": "notify",
+      "params": {
+        "html": "Qwen-Image-Edit-2509-LoRAs-Fast kuruldu. Şimdi Launch'a tıkla.",
+        "href": "start.json"
+      }
+    }
+  ]
+}
