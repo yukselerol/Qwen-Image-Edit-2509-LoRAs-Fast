@@ -1,13 +1,48 @@
 import os
+import random
+from typing import Iterable
+
 import gradio as gr
 import numpy as np
 import spaces
 import torch
-import random
 from PIL import Image
-from typing import Iterable
 from gradio.themes import Soft
 from gradio.themes.utils import colors, fonts, sizes
+
+# =========================
+# DEVICE SEÇİMİ (CUDA / MPS / CPU)
+# =========================
+
+def get_device():
+    if torch.backends.mps.is_available():
+        print(">> Using MPS (Apple Silicon GPU)")
+        return "mps"
+    elif torch.cuda.is_available():
+        print(">> Using CUDA")
+        return "cuda"
+    else:
+        print(">> Using CPU")
+        return "cpu"
+
+
+device = get_device()
+# dtype: CUDA'da bfloat16, MPS'te float16, CPU'da float32
+if device == "cuda":
+    dtype = torch.bfloat16
+elif device == "mps":
+    dtype = torch.float16
+else:
+    dtype = torch.float32
+
+print("torch.__version__ =", torch.__version__)
+print("cuda available:", torch.cuda.is_available())
+print("mps available:", torch.backends.mps.is_available())
+print("Using device:", device)
+
+# =========================
+# TEMA
+# =========================
 
 colors.steel_blue = colors.Color(
     name="steel_blue",
@@ -24,6 +59,7 @@ colors.steel_blue = colors.Color(
     c950="#1E3450",
 )
 
+
 class SteelBlueTheme(Soft):
     def __init__(
         self,
@@ -33,10 +69,14 @@ class SteelBlueTheme(Soft):
         neutral_hue: colors.Color | str = colors.slate,
         text_size: sizes.Size | str = sizes.text_lg,
         font: fonts.Font | str | Iterable[fonts.Font | str] = (
-            fonts.GoogleFont("Outfit"), "Arial", "sans-serif",
+            fonts.GoogleFont("Outfit"),
+            "Arial",
+            "sans-serif",
         ),
         font_mono: fonts.Font | str | Iterable[fonts.Font | str] = (
-            fonts.GoogleFont("IBM Plex Mono"), "ui-monospace", "monospace",
+            fonts.GoogleFont("IBM Plex Mono"),
+            "ui-monospace",
+            "monospace",
         ),
     ):
         super().__init__(
@@ -75,75 +115,89 @@ class SteelBlueTheme(Soft):
             block_label_background_fill="*primary_200",
         )
 
+
 steel_blue_theme = SteelBlueTheme()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# =========================
+# MODEL & LoRA’LAR
+# =========================
 
-print("CUDA_VISIBLE_DEVICES=", os.environ.get("CUDA_VISIBLE_DEVICES"))
-print("torch.__version__ =", torch.__version__)
-print("torch.version.cuda =", torch.version.cuda)
-print("cuda available:", torch.cuda.is_available())
-print("cuda device count:", torch.cuda.device_count())
-if torch.cuda.is_available():
-    print("current device:", torch.cuda.current_device())
-    print("device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
-
-print("Using device:", device)
-
-from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers import FlowMatchEulerDiscreteScheduler  # noqa: F401 (import ama kullanılmıyor)
 from qwenimage.pipeline_qwenimage_edit_plus import QwenImageEditPlusPipeline
 from qwenimage.transformer_qwenimage import QwenImageTransformer2DModel
 from qwenimage.qwen_fa3_processor import QwenDoubleStreamAttnProcessorFA3
 
-dtype = torch.bfloat16
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# Base pipeline + özel transformer
+transformer = QwenImageTransformer2DModel.from_pretrained(
+    "linoyts/Qwen-Image-Edit-Rapid-AIO",  # [transformer weights extracted from: Phr00t/Qwen-Image-Edit-Rapid-AIO]
+    subfolder="transformer",
+    torch_dtype=dtype,
+    # orijinalde device_map='cuda' vardı, M1’de patladığı için kaldırdık
+)
 
 pipe = QwenImageEditPlusPipeline.from_pretrained(
     "Qwen/Qwen-Image-Edit-2509",
-    transformer=QwenImageTransformer2DModel.from_pretrained(
-        "linoyts/Qwen-Image-Edit-Rapid-AIO", # [transformer weights extracted from: Phr00t/Qwen-Image-Edit-Rapid-AIO]
-        subfolder='transformer',
-        torch_dtype=dtype,
-        device_map='cuda'
-    ),
-    torch_dtype=dtype
-).to(device)
+    transformer=transformer,
+    torch_dtype=dtype,
+)
 
-pipe.load_lora_weights("autoweeb/Qwen-Image-Edit-2509-Photo-to-Anime",
-                       weight_name="Qwen-Image-Edit-2509-Photo-to-Anime_000001000.safetensors",
-                       adapter_name="anime")
-pipe.load_lora_weights("dx8152/Qwen-Edit-2509-Multiple-angles",
-                       weight_name="镜头转换.safetensors",
-                       adapter_name="multiple-angles")
-pipe.load_lora_weights("dx8152/Qwen-Image-Edit-2509-Light_restoration",
-                       weight_name="移除光影.safetensors",
-                       adapter_name="light-restoration")
-pipe.load_lora_weights("dx8152/Qwen-Image-Edit-2509-Relight",
-                       weight_name="Qwen-Edit-Relight.safetensors",
-                       adapter_name="relight")
-pipe.load_lora_weights("dx8152/Qwen-Edit-2509-Multi-Angle-Lighting",
-                       weight_name="多角度灯光-251116.safetensors",
-                       adapter_name="multi-angle-lighting")
-pipe.load_lora_weights("tlennon-ie/qwen-edit-skin",
-                       weight_name="qwen-edit-skin_1.1_000002750.safetensors",
-                       adapter_name="edit-skin")
-pipe.load_lora_weights("lovis93/next-scene-qwen-image-lora-2509",
-                       weight_name="next-scene_lora-v2-3000.safetensors",
-                       adapter_name="next-scene")
-pipe.load_lora_weights("vafipas663/Qwen-Edit-2509-Upscale-LoRA",
-                       weight_name="qwen-edit-enhance_64-v3_000001000.safetensors",
-                       adapter_name="upscale-image")
+# pipeline’ı seçilen cihaza taşı
+pipe = pipe.to(device)
 
+# LoRA adapter’ları yükle
+pipe.load_lora_weights(
+    "autoweeb/Qwen-Image-Edit-2509-Photo-to-Anime",
+    weight_name="Qwen-Image-Edit-2509-Photo-to-Anime_000001000.safetensors",
+    adapter_name="anime",
+)
+pipe.load_lora_weights(
+    "dx8152/Qwen-Edit-2509-Multiple-angles",
+    weight_name="镜头转换.safetensors",
+    adapter_name="multiple-angles",
+)
+pipe.load_lora_weights(
+    "dx8152/Qwen-Image-Edit-2509-Light_restoration",
+    weight_name="移除光影.safetensors",
+    adapter_name="light-restoration",
+)
+pipe.load_lora_weights(
+    "dx8152/Qwen-Image-Edit-2509-Relight",
+    weight_name="Qwen-Edit-Relight.safetensors",
+    adapter_name="relight",
+)
+pipe.load_lora_weights(
+    "dx8152/Qwen-Edit-2509-Multi-Angle-Lighting",
+    weight_name="多角度灯光-251116.safetensors",
+    adapter_name="multi-angle-lighting",
+)
+pipe.load_lora_weights(
+    "tlennon-ie/qwen-edit-skin",
+    weight_name="qwen-edit-skin_1.1_000002750.safetensors",
+    adapter_name="edit-skin",
+)
+pipe.load_lora_weights(
+    "lovis93/next-scene-qwen-image-lora-2509",
+    weight_name="next-scene_lora-v2-3000.safetensors",
+    adapter_name="next-scene",
+)
+pipe.load_lora_weights(
+    "vafipas663/Qwen-Edit-2509-Upscale-LoRA",
+    weight_name="qwen-edit-enhance_64-v3_000001000.safetensors",
+    adapter_name="upscale-image",
+)
 
+# Flash-Attn 3 processor
 pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+
 MAX_SEED = np.iinfo(np.int32).max
 
-def update_dimensions_on_upload(image):
+
+def update_dimensions_on_upload(image: Image.Image):
     if image is None:
         return 1024, 1024
-    
+
     original_width, original_height = image.size
-    
+
     if original_width > original_height:
         new_width = 1024
         aspect_ratio = original_height / original_width
@@ -152,12 +206,17 @@ def update_dimensions_on_upload(image):
         new_height = 1024
         aspect_ratio = original_width / original_height
         new_width = int(new_height * aspect_ratio)
-        
-    # Ensure dimensions are multiples of 8
+
+    # 8’in katı yap
     new_width = (new_width // 8) * 8
     new_height = (new_height // 8) * 8
-    
+
     return new_width, new_height
+
+
+# =========================
+# INFERENCE FONKSİYONLARI
+# =========================
 
 @spaces.GPU(duration=30)
 def infer(
@@ -168,11 +227,12 @@ def infer(
     randomize_seed,
     guidance_scale,
     steps,
-    progress=gr.Progress(track_tqdm=True)
+    progress=gr.Progress(track_tqdm=True),
 ):
     if input_image is None:
         raise gr.Error("Please upload an image to edit.")
 
+    # LoRA seçimi
     if lora_adapter == "Photo-to-Anime":
         pipe.set_adapters(["anime"], adapter_weights=[1.0])
     elif lora_adapter == "Multiple-Angles":
@@ -189,16 +249,22 @@ def infer(
         pipe.set_adapters(["next-scene"], adapter_weights=[1.0])
     elif lora_adapter == "Upscale-Image":
         pipe.set_adapters(["upscale-image"], adapter_weights=[1.0])
-        
+
+    # seed
     if randomize_seed:
         seed = random.randint(0, MAX_SEED)
 
-    generator = torch.Generator(device=device).manual_seed(seed)
-    negative_prompt = "worst quality, low quality, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark, username, blurry"
+    # Generator: MPS desteklemiyor, o yüzden mps ise CPU kullan
+    gen_device = device if device in ["cuda", "cpu"] else "cpu"
+    generator = torch.Generator(device=gen_device).manual_seed(seed)
+
+    negative_prompt = (
+        "worst quality, low quality, bad anatomy, bad hands, text, error, "
+        "missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, "
+        "signature, watermark, username, blurry"
+    )
 
     original_image = input_image.convert("RGB")
-    
-    # Use the new function to update dimensions
     width, height = update_dimensions_on_upload(original_image)
 
     result = pipe(
@@ -214,67 +280,144 @@ def infer(
 
     return result, seed
 
+
 @spaces.GPU(duration=30)
 def infer_example(input_image, prompt, lora_adapter):
     input_pil = input_image.convert("RGB")
     guidance_scale = 1.0
     steps = 4
-    result, seed = infer(input_pil, prompt, lora_adapter, 0, True, guidance_scale, steps)
+    result, seed = infer(
+        input_pil,
+        prompt,
+        lora_adapter,
+        0,
+        True,
+        guidance_scale,
+        steps,
+    )
     return result, seed
 
 
-css="""
+# =========================
+# GRADIO UI
+# =========================
+
+css = """
 #col-container {
-    margin: 0 auto;
-    max-width: 960px;
+  margin: 0 auto;
+  max-width: 960px;
 }
 #main-title h1 {font-size: 2.1em !important;}
 """
 
-with gr.Blocks() as demo:
+with gr.Blocks(css=css, theme=steel_blue_theme) as demo:
     with gr.Column(elem_id="col-container"):
         gr.Markdown("# **Qwen-Image-Edit-2509-LoRAs-Fast**", elem_id="main-title")
-        gr.Markdown("Perform diverse image edits using specialized [LoRA](https://huggingface.co/models?other=base_model:adapter:Qwen/Qwen-Image-Edit-2509) adapters for the [Qwen-Image-Edit](https://huggingface.co/Qwen/Qwen-Image-Edit-2509) model.")
+        gr.Markdown(
+            "Perform diverse image edits using specialized "
+            "[LoRA](https://huggingface.co/models?other=base_model:adapter:Qwen/Qwen-Image-Edit-2509) "
+            "adapters for the "
+            "[Qwen-Image-Edit](https://huggingface.co/Qwen/Qwen-Image-Edit-2509) model."
+        )
 
         with gr.Row(equal_height=True):
             with gr.Column():
-                input_image = gr.Image(label="Upload Image", type="pil", height=290)
-                
+                input_image = gr.Image(
+                    label="Upload Image",
+                    type="pil",
+                    height=290,
+                )
                 prompt = gr.Text(
                     label="Edit Prompt",
                     show_label=True,
                     placeholder="e.g., transform into anime..",
                 )
-
                 run_button = gr.Button("Edit Image", variant="primary")
 
             with gr.Column():
-                output_image = gr.Image(label="Output Image", interactive=False, format="png", height=350)
-                
-                with gr.Row():
-                    lora_adapter = gr.Dropdown(
-                        label="Choose Editing Style",
-                        choices=["Photo-to-Anime", "Multiple-Angles", "Light-Restoration", "Multi-Angle-Lighting", "Upscale-Image", "Relight", "Next-Scene", "Edit-Skin"],
-                        value="Photo-to-Anime"
-                    )
-                with gr.Accordion("Advanced Settings", open=False, visible=False):
-                    seed = gr.Slider(label="Seed", minimum=0, maximum=MAX_SEED, step=1, value=0)
-                    randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
-                    guidance_scale = gr.Slider(label="Guidance Scale", minimum=1.0, maximum=10.0, step=0.1, value=1.0)
-                    steps = gr.Slider(label="Inference Steps", minimum=1, maximum=50, step=1, value=4)
-        
+                output_image = gr.Image(
+                    label="Output Image",
+                    interactive=False,
+                    format="png",
+                    height=353,
+                )
+
+        with gr.Row():
+            lora_adapter = gr.Dropdown(
+                label="Choose Editing Style",
+                choices=[
+                    "Photo-to-Anime",
+                    "Multiple-Angles",
+                    "Light-Restoration",
+                    "Multi-Angle-Lighting",
+                    "Upscale-Image",
+                    "Relight",
+                    "Next-Scene",
+                    "Edit-Skin",
+                ],
+                value="Photo-to-Anime",
+            )
+
+        with gr.Accordion("Advanced Settings", open=False, visible=False):
+            seed = gr.Slider(
+                label="Seed",
+                minimum=0,
+                maximum=MAX_SEED,
+                step=1,
+                value=0,
+            )
+            randomize_seed = gr.Checkbox(label="Randomize Seed", value=True)
+            guidance_scale = gr.Slider(
+                label="Guidance Scale",
+                minimum=1.0,
+                maximum=10.0,
+                step=0.1,
+                value=1.0,
+            )
+            steps = gr.Slider(
+                label="Inference Steps",
+                minimum=1,
+                maximum=50,
+                step=1,
+                value=4,
+            )
+
         gr.Examples(
             examples=[
                 ["examples/1.jpg", "Transform into anime.", "Photo-to-Anime"],
-                ["examples/5.jpg", "Remove shadows and relight the image using soft lighting.", "Light-Restoration"],
-                ["examples/4.jpg", "Use a subtle golden-hour filter with smooth light diffusion.", "Relight"],
+                [
+                    "examples/5.jpg",
+                    "Remove shadows and relight the image using soft lighting.",
+                    "Light-Restoration",
+                ],
+                [
+                    "examples/4.jpg",
+                    "Use a subtle golden-hour filter with smooth light diffusion.",
+                    "Relight",
+                ],
                 ["examples/2.jpeg", "Rotate the camera 45 degrees to the left.", "Multiple-Angles"],
                 ["examples/7.jpg", "Light source from the Right Rear", "Multi-Angle-Lighting"],
                 ["examples/10.jpeg", "Upscale the image.", "Upscale-Image"],
                 ["examples/7.jpg", "Light source from the Below", "Multi-Angle-Lighting"],
-                ["examples/2.jpeg", "Switch the camera to a top-down right corner view.", "Multiple-Angles"],
-                ["examples/9.jpg", "The camera moves slightly forward as sunlight breaks through the clouds, casting a soft glow around the character's silhouette in the mist. Realistic cinematic style, atmospheric depth.", "Next-Scene"],
-                ["examples/8.jpg", "Make the subjects skin details more prominent and natural.", "Edit-Skin"],
+                [
+                    "examples/2.jpeg",
+                    "Switch the camera to a top-down right corner view.",
+                    "Multiple-Angles",
+                ],
+                [
+                    "examples/9.jpg",
+                    (
+                        "The camera moves slightly forward as sunlight breaks through the clouds, "
+                        "casting a soft glow around the character's silhouette in the mist. "
+                        "Realistic cinematic style, atmospheric depth."
+                    ),
+                    "Next-Scene",
+                ],
+                [
+                    "examples/8.jpg",
+                    "Make the subjects skin details more prominent and natural.",
+                    "Edit-Skin",
+                ],
                 ["examples/6.jpg", "Switch the camera to a bottom-up view.", "Multiple-Angles"],
                 ["examples/6.jpg", "Rotate the camera 180 degrees upside down.", "Multiple-Angles"],
                 ["examples/4.jpg", "Rotate the camera 45 degrees to the right.", "Multiple-Angles"],
@@ -285,14 +428,23 @@ with gr.Blocks() as demo:
             outputs=[output_image, seed],
             fn=infer_example,
             cache_examples=False,
-            label="Examples"
+            label="Examples",
         )
 
-    run_button.click(
-        fn=infer,
-        inputs=[input_image, prompt, lora_adapter, seed, randomize_seed, guidance_scale, steps],
-        outputs=[output_image, seed]
-    )
+        run_button.click(
+            fn=infer,
+            inputs=[
+                input_image,
+                prompt,
+                lora_adapter,
+                seed,
+                randomize_seed,
+                guidance_scale,
+                steps,
+            ],
+            outputs=[output_image, seed],
+        )
+
 
 if __name__ == "__main__":
-    demo.queue(max_size=30).launch(css=css, theme=steel_blue_theme, mcp_server=True, ssr_mode=False, show_error=True)
+    demo.queue(max_size=50).launch(mcp_server=True, ssr_mode=False, show_error=True)
